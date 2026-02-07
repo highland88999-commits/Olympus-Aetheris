@@ -120,6 +120,8 @@
         ];
 
         let mode = 'globe'; // 'globe' or 'city'
+        let currentCityName = '';
+        const builtCities = new Set();
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
 
@@ -128,6 +130,11 @@
         const earthGeom = new THREE.SphereGeometry(5, 64, 64);
         const earthMat = new THREE.MeshPhongMaterial({
             map: loader.load('https://www.solarsystemscope.com/textures/download/2k_earth_daymap.jpg'),
+            specularMap: loader.load('https://threejs.org/examples/textures/planets/earth_specular_2048.jpg'),
+            bumpMap: loader.load('https://threejs.org/examples/textures/planets/earth_bump_2048.jpg'),
+            bumpScale: 0.005,
+            specular: new THREE.Color(0x333333),
+            shininess: 25,
             emissive: 0x071426
         });
         const earth = new THREE.Mesh(earthGeom, earthMat);
@@ -171,14 +178,14 @@
             const pos = latLonToVector3(city.lat, city.lon, 5);
             city.pos = pos;
             const markerGeom = new THREE.SphereGeometry(0.15, 16, 16);
-            const markerMat = new THREE.MeshBasicMaterial({ color: 0x0000ff }); // All blue for now
+            const markerMat = new THREE.MeshBasicMaterial({ color: 0x0000ff }); // All blue initially
             const marker = new THREE.Mesh(markerGeom, markerMat);
             marker.position.copy(pos);
             marker.userData = { cityName: city.name };
             globeGroup.add(marker);
             markers.push(marker);
 
-            // Sun or Moon icon
+            // Sun or Moon icon on globe
             const isDay = calculateIsDay(city.lon);
             const iconGeom = new THREE.SphereGeometry(0.1, 8, 8);
             const iconMat = new THREE.MeshBasicMaterial({ color: isDay ? 0xffff00 : 0xffffff });
@@ -213,6 +220,8 @@
         // --- City Scene Creation ---
         const cityGroup = new THREE.Group();
         cityGroup.visible = false;
+        const weatherGroup = new THREE.Group();
+        cityGroup.add(weatherGroup);
         
         // Procedural City Grid
         const buildCity = () => {
@@ -249,6 +258,7 @@
             const towerMat = new THREE.MeshPhongMaterial({ color: 0xffffff, emissive: 0x00d4ff, emissiveIntensity: 0.5 });
             const tower = new THREE.Mesh(towerGeom, towerMat);
             tower.position.y = 3.5;
+            tower.name = 'aetherTower';
             unitGroup.add(tower);
 
             // Halo Effect
@@ -274,18 +284,74 @@
 
         camera.position.z = 15;
 
+        // --- Weather Effects Functions ---
+        function createSunMoon(isDay) {
+            const geom = new THREE.SphereGeometry(5, 32, 32);
+            const mat = new THREE.MeshBasicMaterial({ color: isDay ? 0xffff00 : 0xdddddd });
+            const mesh = new THREE.Mesh(geom, mat);
+            mesh.position.set(0, 100, -100);
+            return mesh;
+        }
+
+        function createRain(numParticles = 5000) {
+            const positions = [];
+            for (let i = 0; i < numParticles; i++) {
+                positions.push(Math.random() * 200 - 100, Math.random() * 50 + 10, Math.random() * 200 - 100);
+            }
+            const geom = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            const mat = new THREE.PointsMaterial({ color: 0x8888ff, size: 0.1 });
+            const points = new THREE.Points(geom, mat);
+            points.userData = { type: 'rain' };
+            return points;
+        }
+
+        function createSnow(numParticles = 5000) {
+            const positions = [];
+            for (let i = 0; i < numParticles; i++) {
+                positions.push(Math.random() * 200 - 100, Math.random() * 50 + 10, Math.random() * 200 - 100);
+            }
+            const geom = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.2 });
+            const points = new THREE.Points(geom, mat);
+            points.userData = { type: 'snow' };
+            return points;
+        }
+
         // --- Interaction ---
         window.addEventListener('click', (event) => {
-            if (mode !== 'globe') return;
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
             raycaster.setFromCamera(mouse, camera);
-            
-            const intersects = raycaster.intersectObjects(markers);
-            if (intersects.length > 0) {
-                const cityName = intersects[0].object.userData.cityName;
-                const city = cities.find(c => c.name === cityName);
-                zoomToCity(cityName, city);
+
+            if (mode === 'city') {
+                const intersects = raycaster.intersectObjects(cityGroup.children, true);
+                if (intersects.length > 0) {
+                    const obj = intersects[0].object;
+                    if (obj.name === 'aetherTower') {
+                        const password = prompt('Enter password to build this unit:');
+                        if (password === 'Aetheris') {
+                            builtCities.add(currentCityName);
+                            cityGroup.traverse(child => {
+                                if (child.name === 'aetherTower') {
+                                    child.material.color.set(0x00ff00);
+                                    child.material.emissive.set(0x00ff00);
+                                }
+                            });
+                            const marker = markers.find(m => m.userData.cityName === currentCityName);
+                            if (marker) marker.material.color.set(0x00ff00);
+                            alert('Unit built successfully!');
+                        } else {
+                            alert('Incorrect password.');
+                        }
+                    }
+                }
+            } else if (mode === 'globe') {
+                const intersects = raycaster.intersectObjects(markers);
+                if (intersects.length > 0) {
+                    const cityName = intersects[0].object.userData.cityName;
+                    const city = cities.find(c => c.name === cityName);
+                    zoomToCity(cityName, city);
+                }
             }
         });
 
@@ -321,10 +387,29 @@
         };
 
         function zoomToCity(name, city) {
+            currentCityName = name;
             mode = 'city';
             document.getElementById('status').innerText = `Deployment View: ${name} - Fetching weather...`;
             document.getElementById('back-btn').style.display = 'block';
             
+            // Set tower colors based on built status
+            const isBuilt = builtCities.has(name);
+            cityGroup.traverse(child => {
+                if (child.name === 'aetherTower') {
+                    if (isBuilt) {
+                        child.material.color.set(0x00ff00);
+                        child.material.emissive.set(0x00ff00);
+                    } else {
+                        child.material.color.set(0xffffff);
+                        child.material.emissive.set(0x00d4ff);
+                    }
+                }
+            });
+
+            // Clear weather effects
+            weatherGroup.children = [];
+            scene.fog = null;
+
             // Fetch real-time weather
             fetch(`https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&current_weather=true`)
                 .then(response => response.json())
@@ -332,6 +417,29 @@
                     const weather = data.current_weather;
                     const condition = weatherCodes[weather.weathercode] || 'Unknown';
                     document.getElementById('status').innerText = `Deployment View: ${name} - Temp: ${weather.temperature}°C, Wind: ${weather.windspeed} km/h, Condition: ${condition}`;
+
+                    // Add sun/moon
+                    const isDay = weather.is_day;
+                    const sunMoon = createSunMoon(isDay);
+                    weatherGroup.add(sunMoon);
+
+                    // Add weather effects
+                    const lowerCondition = condition.toLowerCase();
+                    if (lowerCondition.includes('fog')) {
+                        scene.fog = new THREE.FogExp2(0xcccccc, 0.05);
+                    } else if (lowerCondition.includes('cloud') || lowerCondition.includes('overcast')) {
+                        scene.fog = new THREE.FogExp2(0xcccccc, 0.01);
+                    }
+
+                    if (lowerCondition.includes('rain') || lowerCondition.includes('drizzle') || lowerCondition.includes('shower') || lowerCondition.includes('thunderstorm')) {
+                        const rain = createRain();
+                        weatherGroup.add(rain);
+                        scene.fog = new THREE.FogExp2(0xcccccc, 0.02);
+                    } else if (lowerCondition.includes('snow')) {
+                        const snow = createSnow();
+                        weatherGroup.add(snow);
+                        scene.fog = new THREE.FogExp2(0xcccccc, 0.02);
+                    }
                 })
                 .catch(error => {
                     document.getElementById('status').innerText = `Deployment View: ${name} - Weather fetch failed`;
@@ -350,6 +458,8 @@
             document.getElementById('back-btn').style.display = 'none';
             cityGroup.visible = false;
             globeGroup.visible = true;
+            scene.fog = null;
+            weatherGroup.children = [];
             camera.position.set(0, 0, 15);
             camera.lookAt(0, 0, 0);
         }
@@ -362,6 +472,27 @@
                 clouds.rotation.y += 0.0005; // Slow cloud rotation for dynamic weather feel
             } else {
                 cityGroup.rotation.y += 0.001; // Slow city rotation for effect
+
+                // Update weather particles
+                weatherGroup.traverse(child => {
+                    if (child.userData.type === 'rain') {
+                        const pos = child.geometry.attributes.position;
+                        for (let i = 0; i < pos.count; i++) {
+                            pos.array[i * 3 + 1] -= 0.2;
+                            if (pos.array[i * 3 + 1] < 0) pos.array[i * 3 + 1] = 50;
+                        }
+                        pos.needsUpdate = true;
+                    } else if (child.userData.type === 'snow') {
+                        const pos = child.geometry.attributes.position;
+                        for (let i = 0; i < pos.count; i++) {
+                            pos.array[i * 3 + 1] -= 0.05;
+                            pos.array[i * 3] += Math.random() * 0.02 - 0.01;
+                            pos.array[i * 3 + 2] += Math.random() * 0.02 - 0.01;
+                            if (pos.array[i * 3 + 1] < 0) pos.array[i * 3 + 1] = 50;
+                        }
+                        pos.needsUpdate = true;
+                    }
+                });
             }
             renderer.render(scene, camera);
         }
