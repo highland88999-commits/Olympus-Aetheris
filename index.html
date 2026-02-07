@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Olympus Global Aether Network</title>
+    <style>
+        body { margin: 0; background: #050505; color: white; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+        #ui { position: absolute; top: 20px; left: 20px; z-index: 10; pointer-events: none; }
+        h1 { margin: 0; font-weight: 300; letter-spacing: 2px; color: #00d4ff; }
+        .hint { font-size: 0.9em; opacity: 0.7; }
+        #back-btn { 
+            position: absolute; bottom: 20px; right: 20px; z-index: 100;
+            padding: 10px 20px; background: rgba(0, 212, 255, 0.2);
+            border: 1px solid #00d4ff; color: white; cursor: pointer; display: none;
+        }
+        #back-btn:hover { background: #00d4ff; color: black; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h1>OLYMPUS AETHERIS-7</h1>
+        <p class="hint">Global Atmospheric Mastery Network // 2026</p>
+        <p id="status">Global Overview Mode</p>
+    </div>
+    <button id="back-btn" onclick="zoomOut()">Return to Globe</button>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- Setup ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const cities = [
+            { name: "New York", lat: 40.71, lon: -74.00, pos: new THREE.Vector3() },
+            { name: "London", lat: 51.50, lon: -0.12, pos: new THREE.Vector3() },
+            { name: "Tokyo", lat: 35.68, lon: 139.76, pos: new THREE.Vector3() }
+        ];
+
+        let mode = 'globe'; // 'globe' or 'city'
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        // --- Globe Creation ---
+        const globeGroup = new THREE.Group();
+        const earthGeom = new THREE.SphereGeometry(5, 64, 64);
+        const earthMat = new THREE.MeshPhongMaterial({
+            color: 0x112244,
+            emissive: 0x071426,
+            wireframe: true
+        });
+        const earth = new THREE.Mesh(earthGeom, earthMat);
+        globeGroup.add(earth);
+
+        // Atmosphere Glow
+        const atmosGeom = new THREE.SphereGeometry(5.2, 64, 64);
+        const atmosMat = new THREE.MeshBasicMaterial({ color: 0x00d4ff, transparent: true, opacity: 0.1, side: THREE.BackSide });
+        globeGroup.add(new THREE.Mesh(atmosGeom, atmosMat));
+
+        // City Markers
+        function latLonToVector3(lat, lon, radius) {
+            const phi = (90 - lat) * (Math.PI / 180);
+            const theta = (lon + 180) * (Math.PI / 180);
+            return new THREE.Vector3(
+                -radius * Math.sin(phi) * Math.cos(theta),
+                radius * Math.cos(phi),
+                radius * Math.sin(phi) * Math.sin(theta)
+            );
+        }
+
+        const markers = [];
+        cities.forEach(city => {
+            const pos = latLonToVector3(city.lat, city.lon, 5);
+            city.pos = pos;
+            const markerGeom = new THREE.SphereGeometry(0.15, 16, 16);
+            const markerMat = new THREE.MeshBasicMaterial({ color: 0xff3300 });
+            const marker = new THREE.Mesh(markerGeom, markerMat);
+            marker.position.copy(pos);
+            marker.userData = { cityName: city.name };
+            globeGroup.add(marker);
+            markers.push(marker);
+        });
+
+        scene.add(globeGroup);
+
+        // --- City Scene Creation ---
+        const cityGroup = new THREE.Group();
+        cityGroup.visible = false;
+        
+        // Procedural City Grid
+        const buildCity = () => {
+            const gridSize = 40;
+            const spacing = 4;
+            for(let x = -gridSize; x < gridSize; x += spacing) {
+                for(let z = -gridSize; z < gridSize; z += spacing) {
+                    // Buildings
+                    const h = Math.random() * 10 + 2;
+                    const bGeom = new THREE.BoxGeometry(2, h, 2);
+                    const bMat = new THREE.MeshPhongMaterial({ color: 0x444444 });
+                    const building = new THREE.Mesh(bGeom, bMat);
+                    building.position.set(x, h/2, z);
+                    cityGroup.add(building);
+
+                    // Place Olympus Unit every 5 blocks (approx 20 units of distance)
+                    if (Math.abs(x) % (spacing * 5) === 0 && Math.abs(z) % (spacing * 5) === 0) {
+                        createAetherUnit(x + 2, z + 2);
+                    }
+                }
+            }
+            // Ground
+            const gGeom = new THREE.PlaneGeometry(200, 200);
+            const gMat = new THREE.MeshPhongMaterial({ color: 0x111111 });
+            const ground = new THREE.Mesh(gGeom, gMat);
+            ground.rotation.x = -Math.PI/2;
+            cityGroup.add(ground);
+        };
+
+        function createAetherUnit(x, z) {
+            const unitGroup = new THREE.Group();
+            // The 7m Tower (Scale: 1 unit = 1 meter)
+            const towerGeom = new THREE.CylinderGeometry(1, 1.25, 7, 32);
+            const towerMat = new THREE.MeshPhongMaterial({ color: 0xffffff, emissive: 0x00d4ff, emissiveIntensity: 0.5 });
+            const tower = new THREE.Mesh(towerGeom, towerMat);
+            tower.position.y = 3.5;
+            unitGroup.add(tower);
+
+            // Halo Effect
+            const haloGeom = new THREE.RingGeometry(1.5, 1.7, 32);
+            const haloMat = new THREE.MeshBasicMaterial({ color: 0x00d4ff, side: THREE.DoubleSide, transparent: true, opacity: 0.8 });
+            const halo = new THREE.Mesh(haloGeom, haloMat);
+            halo.rotation.x = Math.PI/2;
+            halo.position.y = 7.1;
+            unitGroup.add(halo);
+
+            unitGroup.position.set(x, 0, z);
+            cityGroup.add(unitGroup);
+        }
+
+        buildCity();
+        scene.add(cityGroup);
+
+        // --- Lighting ---
+        const light = new THREE.PointLight(0xffffff, 100, 100);
+        light.position.set(10, 10, 10);
+        scene.add(light);
+        scene.add(new THREE.AmbientLight(0x404040));
+
+        camera.position.z = 15;
+
+        // --- Interaction ---
+        window.addEventListener('click', (event) => {
+            if (mode !== 'globe') return;
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            
+            const intersects = raycaster.intersectObjects(markers);
+            if (intersects.length > 0) {
+                const city = intersects[0].object.userData.cityName;
+                zoomToCity(city);
+            }
+        });
+
+        function zoomToCity(name) {
+            mode = 'city';
+            document.getElementById('status').innerText = `Deployment View: ${name}`;
+            document.getElementById('back-btn').style.display = 'block';
+            
+            // Animation: Fade out globe, fade in city
+            globeGroup.visible = false;
+            cityGroup.visible = true;
+            camera.position.set(0, 15, 30);
+            camera.lookAt(0, 0, 0);
+        }
+
+        window.zoomOut = function() {
+            mode = 'globe';
+            document.getElementById('status').innerText = `Global Overview Mode`;
+            document.getElementById('back-btn').style.display = 'none';
+            cityGroup.visible = false;
+            globeGroup.visible = true;
+            camera.position.set(0, 0, 15);
+            camera.lookAt(0, 0, 0);
+        }
+
+        // --- Render Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            if (mode === 'globe') {
+                globeGroup.rotation.y += 0.002;
+            } else {
+                cityGroup.rotation.y += 0.001; // Slow city rotation for effect
+            }
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
