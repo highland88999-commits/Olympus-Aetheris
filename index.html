@@ -38,6 +38,8 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
+        const loader = new THREE.TextureLoader();
+
         const cities = [
             { name: "Shanghai", lat: 31.2323437, lon: 121.4691024, pos: new THREE.Vector3() },
             { name: "Beijing", lat: 39.9057136, lon: 116.3912972, pos: new THREE.Vector3() },
@@ -114,8 +116,8 @@
             { name: "Santiago", lat: -33.4377756, lon: -70.6504502, pos: new THREE.Vector3() },
             { name: "Prayagraj", lat: 25.4381302, lon: 81.8338005, pos: new THREE.Vector3() },
             { name: "Jieyang", lat: 23.553156, lon: 116.3680354, pos: new THREE.Vector3() },
-            { name: "Qujing", lat: 25.490102, lon: 103.796167, pos: new THREE.Vector3() } // Added approximate for Qujing as data was cut off
-        ]; // Populated with the world's 76 most populated cities (over ~5M inhabitants each) as a practical approximation of major known locations. Adding literally every location would be impossible and crash the renderer.
+            { name: "Qujing", lat: 25.490102, lon: 103.796167, pos: new THREE.Vector3() }
+        ];
 
         let mode = 'globe'; // 'globe' or 'city'
         const raycaster = new THREE.Raycaster();
@@ -125,12 +127,21 @@
         const globeGroup = new THREE.Group();
         const earthGeom = new THREE.SphereGeometry(5, 64, 64);
         const earthMat = new THREE.MeshPhongMaterial({
-            color: 0x112244,
-            emissive: 0x071426,
-            wireframe: true
+            map: loader.load('https://www.solarsystemscope.com/textures/download/2k_earth_daymap.jpg'),
+            emissive: 0x071426
         });
         const earth = new THREE.Mesh(earthGeom, earthMat);
         globeGroup.add(earth);
+
+        // Clouds for weather model
+        const cloudGeom = new THREE.SphereGeometry(5.05, 64, 64);
+        const cloudMat = new THREE.MeshPhongMaterial({
+            map: loader.load('https://www.solarsystemscope.com/textures/download/2k_earth_clouds.jpg'),
+            transparent: true,
+            opacity: 0.5
+        });
+        const clouds = new THREE.Mesh(cloudGeom, cloudMat);
+        globeGroup.add(clouds);
 
         // Atmosphere Glow
         const atmosGeom = new THREE.SphereGeometry(5.2, 64, 64);
@@ -148,20 +159,56 @@
             );
         }
 
+        function calculateIsDay(lon) {
+            const date = new Date();
+            const utcHour = date.getUTCHours() + (date.getUTCMinutes() / 60);
+            let localHour = (utcHour + (lon / 15) + 24) % 24;
+            return localHour >= 6 && localHour < 18;
+        }
+
         const markers = [];
         cities.forEach(city => {
             const pos = latLonToVector3(city.lat, city.lon, 5);
             city.pos = pos;
             const markerGeom = new THREE.SphereGeometry(0.15, 16, 16);
-            const markerMat = new THREE.MeshBasicMaterial({ color: 0xff3300 });
+            const markerMat = new THREE.MeshBasicMaterial({ color: 0x0000ff }); // All blue for now
             const marker = new THREE.Mesh(markerGeom, markerMat);
             marker.position.copy(pos);
             marker.userData = { cityName: city.name };
             globeGroup.add(marker);
             markers.push(marker);
+
+            // Sun or Moon icon
+            const isDay = calculateIsDay(city.lon);
+            const iconGeom = new THREE.SphereGeometry(0.1, 8, 8);
+            const iconMat = new THREE.MeshBasicMaterial({ color: isDay ? 0xffff00 : 0xffffff });
+            const icon = new THREE.Mesh(iconGeom, iconMat);
+            const offset = pos.clone().normalize().multiplyScalar(0.3);
+            icon.position.copy(pos).add(offset);
+            globeGroup.add(icon);
         });
 
         scene.add(globeGroup);
+
+        // --- Stars ---
+        const starsGeometry = new THREE.BufferGeometry();
+        const starsVertices = [];
+        for (let i = 0; i < 10000; i++) {
+            starsVertices.push(THREE.MathUtils.randFloatSpread(2000));
+            starsVertices.push(THREE.MathUtils.randFloatSpread(2000));
+            starsVertices.push(THREE.MathUtils.randFloatSpread(2000));
+        }
+        starsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starsVertices, 3));
+        const starsMaterial = new THREE.PointsMaterial({ color: 0x888888, size: 0.1 });
+        const starField = new THREE.Points(starsGeometry, starsMaterial);
+        scene.add(starField);
+
+        // --- Moon ---
+        const moonGeom = new THREE.SphereGeometry(0.5, 32, 32);
+        const moonMat = new THREE.MeshPhongMaterial({ color: 0xdddddd });
+        const moon = new THREE.Mesh(moonGeom, moonMat);
+        moon.position.set(20, 0, 0);
+        scene.add(moon);
 
         // --- City Scene Creation ---
         const cityGroup = new THREE.Group();
@@ -236,16 +283,60 @@
             
             const intersects = raycaster.intersectObjects(markers);
             if (intersects.length > 0) {
-                const city = intersects[0].object.userData.cityName;
-                zoomToCity(city);
+                const cityName = intersects[0].object.userData.cityName;
+                const city = cities.find(c => c.name === cityName);
+                zoomToCity(cityName, city);
             }
         });
 
-        function zoomToCity(name) {
+        const weatherCodes = {
+            0: 'Clear sky',
+            1: 'Mainly clear',
+            2: 'Partly cloudy',
+            3: 'Overcast',
+            45: 'Fog',
+            48: 'Depositing rime fog',
+            51: 'Light drizzle',
+            53: 'Moderate drizzle',
+            55: 'Dense drizzle',
+            56: 'Light freezing drizzle',
+            57: 'Dense freezing drizzle',
+            61: 'Slight rain',
+            63: 'Moderate rain',
+            65: 'Heavy rain',
+            66: 'Light freezing rain',
+            67: 'Heavy freezing rain',
+            71: 'Slight snow fall',
+            73: 'Moderate snow fall',
+            75: 'Heavy snow fall',
+            77: 'Snow grains',
+            80: 'Slight rain showers',
+            81: 'Moderate rain showers',
+            82: 'Violent rain showers',
+            85: 'Slight snow showers',
+            86: 'Heavy snow showers',
+            95: 'Thunderstorm',
+            96: 'Thunderstorm with slight hail',
+            99: 'Thunderstorm with heavy hail'
+        };
+
+        function zoomToCity(name, city) {
             mode = 'city';
-            document.getElementById('status').innerText = `Deployment View: ${name}`;
+            document.getElementById('status').innerText = `Deployment View: ${name} - Fetching weather...`;
             document.getElementById('back-btn').style.display = 'block';
             
+            // Fetch real-time weather
+            fetch(`https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&current_weather=true`)
+                .then(response => response.json())
+                .then(data => {
+                    const weather = data.current_weather;
+                    const condition = weatherCodes[weather.weathercode] || 'Unknown';
+                    document.getElementById('status').innerText = `Deployment View: ${name} - Temp: ${weather.temperature}°C, Wind: ${weather.windspeed} km/h, Condition: ${condition}`;
+                })
+                .catch(error => {
+                    document.getElementById('status').innerText = `Deployment View: ${name} - Weather fetch failed`;
+                });
+
             // Animation: Fade out globe, fade in city
             globeGroup.visible = false;
             cityGroup.visible = true;
@@ -268,6 +359,7 @@
             requestAnimationFrame(animate);
             if (mode === 'globe') {
                 globeGroup.rotation.y += 0.002;
+                clouds.rotation.y += 0.0005; // Slow cloud rotation for dynamic weather feel
             } else {
                 cityGroup.rotation.y += 0.001; // Slow city rotation for effect
             }
